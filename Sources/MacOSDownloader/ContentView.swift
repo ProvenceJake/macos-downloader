@@ -27,7 +27,7 @@ struct ContentView: View {
             }
         } message: {
             if let volume = model.selectedVolume {
-                Text("“\(volume.eraseTargetDescription)”上的所有数据都会被删除。APFS 目标会先被格式化为 Mac OS Extended (Journaled)，然后再写入启动盘。")
+                Text("“\(volume.eraseTargetDescription)”上的所有数据都会被删除。APFS 目标会先被格式化为 Mac OS Extended (Journaled)。写入时会打开终端，请在终端输入管理员密码，并允许访问移动磁盘。")
             } else {
                 Text("目标外接磁盘上的所有数据都会被删除。")
             }
@@ -287,10 +287,16 @@ private struct DownloadMeter: View {
                 .progressViewStyle(.linear)
 
             HStack(spacing: 14) {
+                MeterValue(title: "进度", value: progress?.percentText ?? "--")
                 MeterValue(title: "已下载", value: progress?.downloadedText ?? "准备中")
                 MeterValue(title: "总大小", value: progress?.totalText ?? "大小未知")
                 MeterValue(title: "速度", value: progress?.speedText ?? "计算中")
             }
+
+            Text(progress?.remainingText ?? "等待开始")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
         }
         .padding(12)
         .background {
@@ -371,6 +377,10 @@ private struct USBWriterPanel: View {
                         .foregroundStyle(.secondary)
                 }
 
+                if model.isWritingUSB || model.writeProgress != nil {
+                    WriteMeter(progress: model.writeProgress)
+                }
+
                 Spacer(minLength: 0)
 
                 HStack(spacing: 10) {
@@ -402,6 +412,37 @@ private struct USBWriterPanel: View {
                     .buttonStyle(.bordered)
                 }
             }
+        }
+    }
+}
+
+private struct WriteMeter: View {
+    let progress: WriteProgressSnapshot?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ProgressView(value: progress?.fraction ?? 0)
+                .progressViewStyle(.linear)
+
+            HStack(spacing: 14) {
+                MeterValue(title: "阶段", value: progress?.phase ?? "准备")
+                MeterValue(title: "进度", value: progress?.percentText ?? "--")
+            }
+
+            Text(progress?.detail ?? "等待开始")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+                .minimumScaleFactor(0.82)
+        }
+        .padding(12)
+        .background {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color(red: 0.84, green: 0.34, blue: 0.18).opacity(0.08))
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(Color(red: 0.84, green: 0.34, blue: 0.18).opacity(0.18), lineWidth: 1)
         }
     }
 }

@@ -19,7 +19,7 @@
     <key>CFBundleShortVersionString</key>
     <string>1.0</string>
     <key>CFBundleVersion</key>
-    <string>3</string>
+    <string>8</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
     <key>NSAppTransportSecurity</key>
@@ -37,6 +37,8 @@
     </dict>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>NSRemovableVolumesUsageDescription</key>
+    <string>需要访问所选的外接 U 盘，以制作 macOS 可引导安装盘。</string>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
 </dict>

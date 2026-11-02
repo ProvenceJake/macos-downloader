@@ -1,40 +1,13 @@
 import Foundation
 
 enum CatalogResolver {
-    private static let cache = CatalogPackageCache()
-
-    static func resolve(version: String) async throws -> InstallAssistantPackage {
-        if let cachedPackage = await cache.package(for: version) {
-            return cachedPackage
+    static func resolveLatest(majorVersion: String) async throws -> InstallAssistantPackage {
+        guard let package = try await loadInstallAssistantPackages()
+            .first(where: { InstallerCatalog.majorVersion(for: $0.version) == majorVersion })
+        else {
+            throw CatalogResolverError.packageNotFound(majorVersion)
         }
-
-        let products = try await loadCatalogProducts()
-        for (productID, product) in products {
-            guard
-                let packageInfo = installAssistantPackageInfo(in: product),
-                let metadataURL = metadataURL(in: product),
-                let metadata = try? await installAssistantMetadata(from: metadataURL)
-            else {
-                continue
-            }
-
-            let package = InstallAssistantPackage(
-                id: productID,
-                title: InstallerCatalog.title(for: metadata.version),
-                version: metadata.version,
-                build: metadata.build,
-                sizeBytes: packageInfo.sizeBytes,
-                url: packageInfo.url,
-                postDate: product["PostDate"] as? Date
-            )
-            await cache.store(package)
-
-            if metadata.version == version {
-                return package
-            }
-        }
-
-        throw CatalogResolverError.packageNotFound(version)
+        return package
     }
 
     static func loadInstallAssistantPackages() async throws -> [InstallAssistantPackage] {
@@ -43,14 +16,12 @@ enum CatalogResolver {
         for (productID, product) in products {
             guard
                 let packageInfo = installAssistantPackageInfo(in: product),
-                let metadataURL = metadataURL(in: product)
+                let distributionURL = distributionURL(in: product)
             else {
                 continue
             }
 
-            guard let metadata = try? await installAssistantMetadata(from: metadataURL) else {
-                continue
-            }
+            let metadata = try await installAssistantMetadata(from: distributionURL)
 
             packages.append(
                 InstallAssistantPackage(
@@ -65,7 +36,6 @@ enum CatalogResolver {
             )
         }
 
-        await cache.store(packages)
         return sortedPackages(packages)
     }
 
@@ -109,16 +79,7 @@ enum CatalogResolver {
     }
 
     private static func currentCatalogURL() -> URL {
-        let plistURL = URL(fileURLWithPath: "/Library/Preferences/com.apple.SoftwareUpdate.plist")
-        if
-            let dictionary = NSDictionary(contentsOf: plistURL) as? [String: Any],
-            let value = dictionary["CatalogURL"] as? String,
-            let url = URL(string: value)
-        {
-            return url
-        }
-
-        return URL(string: "https://swscan.apple.com/content/catalogs/others/index-27seed-27-26-15-14-13-12-10.16-10.15-10.14-10.13-10.12-10.11-10.10-10.9-mountainlion-lion-snowleopard-leopard.merged-1.sucatalog.gz")!
+        URL(string: "https://swscan.apple.com/content/catalogs/others/index-27-26-15-14-13-12-10.16-10.15-10.14-10.13-10.12-10.11-10.10-10.9-mountainlion-lion-snowleopard-leopard.merged-1.sucatalog.gz")!
     }
 
     private static func gunzip(_ data: Data) throws -> Data {
@@ -134,17 +95,19 @@ enum CatalogResolver {
         process.executableURL = URL(fileURLWithPath: "/usr/bin/gzip")
         process.arguments = ["-dc", compressedURL.path]
 
-        let outputPipe = Pipe()
+        let outputURL = temporaryDirectory.appendingPathComponent("catalog.sucatalog")
+        FileManager.default.createFile(atPath: outputURL.path, contents: nil)
+        let outputHandle = try FileHandle(forWritingTo: outputURL)
+        defer { try? outputHandle.close() }
         let errorPipe = Pipe()
-        process.standardOutput = outputPipe
+        process.standardOutput = outputHandle
         process.standardError = errorPipe
 
         try process.run()
         process.waitUntilExit()
 
-        let output = outputPipe.fileHandleForReading.readDataToEndOfFile()
         if process.terminationStatus == 0 {
-            return output
+            return try Data(contentsOf: outputURL)
         }
 
         let errorOutput = String(data: errorPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
@@ -174,50 +137,32 @@ enum CatalogResolver {
         return nil
     }
 
-    private static func metadataURL(in product: [String: Any]) -> URL? {
-        guard let packages = product["Packages"] as? [[String: Any]] else { return nil }
-
-        let preferredNames = [
-            "com_apple_MobileAsset_MacSoftwareUpdate.plist",
-            "Info.plist"
-        ]
-
-        for name in preferredNames {
-            for package in packages {
-                guard
-                    let urlString = package["URL"] as? String,
-                    let url = URL(string: urlString),
-                    url.lastPathComponent == name
-                else {
-                    continue
-                }
-                return url
-            }
-        }
-
-        return nil
+    private static func distributionURL(in product: [String: Any]) -> URL? {
+        guard let distributions = product["Distributions"] as? [String: String] else { return nil }
+        return (distributions["English"] ?? distributions.values.first).flatMap(URL.init(string:))
     }
 
     private static func installAssistantMetadata(from url: URL) async throws -> (version: String, build: String) {
         let (data, _) = try await URLSession.shared.data(from: url)
-        guard let root = try PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? [String: Any] else {
+        let document = try XMLDocument(data: data, options: [])
+        guard let dictionary = try document.nodes(forXPath: "/installer-gui-script/auxinfo/dict").first as? XMLElement else {
             throw CatalogResolverError.invalidMetadata
         }
 
-        if
-            let assets = root["Assets"] as? [[String: Any]],
-            let asset = assets.first,
-            let version = asset["OSVersion"] as? String,
-            let build = asset["Build"] as? String
-        {
-            return (version, build)
+        let elements = dictionary.children?.compactMap { $0 as? XMLElement } ?? []
+        var fields: [String: String] = [:]
+        for index in stride(from: 0, to: elements.count, by: 2) {
+            guard index + 1 < elements.count,
+                  elements[index].name == "key",
+                  elements[index + 1].name == "string",
+                  let key = elements[index].stringValue,
+                  let value = elements[index + 1].stringValue else {
+                continue
+            }
+            fields[key] = value
         }
 
-        if
-            let properties = root["MobileAssetProperties"] as? [String: Any],
-            let version = properties["OSVersion"] as? String,
-            let build = properties["Build"] as? String
-        {
+        if let version = fields["VERSION"], let build = fields["BUILD"] {
             return (version, build)
         }
 
@@ -232,28 +177,6 @@ enum CatalogResolver {
 private extension Data {
     var isGzipData: Bool {
         count >= 2 && self[startIndex] == 0x1f && self[index(after: startIndex)] == 0x8b
-    }
-}
-
-private actor CatalogPackageCache {
-    private var packagesByVersion: [String: InstallAssistantPackage] = [:]
-
-    func package(for version: String) -> InstallAssistantPackage? {
-        packagesByVersion[version]
-    }
-
-    func store(_ package: InstallAssistantPackage) {
-        if let existing = packagesByVersion[package.version],
-           (existing.postDate ?? .distantPast) >= (package.postDate ?? .distantPast) {
-            return
-        }
-        packagesByVersion[package.version] = package
-    }
-
-    func store(_ packages: [InstallAssistantPackage]) {
-        for package in packages {
-            store(package)
-        }
     }
 }
 
@@ -272,7 +195,7 @@ enum CatalogResolverError: LocalizedError {
         case let .gunzipFailed(output):
             return output.isEmpty ? "无法解压 Apple 软件更新目录。" : "无法解压 Apple 软件更新目录：\(output)"
         case let .packageNotFound(version):
-            return "没有在 Apple 软件更新目录中找到 macOS \(version) 的 InstallAssistant.pkg。"
+            return "没有在 Apple 软件更新目录中找到 macOS \(version) 的完整安装器。"
         }
     }
 }

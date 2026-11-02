@@ -4,11 +4,11 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME="MacOS下载器.app"
 APP_PATH="$ROOT_DIR/build/$APP_NAME"
-BINARY_PATH="$ROOT_DIR/.build/arm64-apple-macosx/release/MacOSDownloader"
 
 cd "$ROOT_DIR"
 
 swift build -c release --arch arm64
+BINARY_PATH="$(swift build -c release --arch arm64 --show-bin-path)/MacOSDownloader"
 
 rm -rf "$APP_PATH"
 mkdir -p "$APP_PATH/Contents/MacOS" "$APP_PATH/Contents/Resources"

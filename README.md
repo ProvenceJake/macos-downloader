@@ -4,14 +4,15 @@
 
 ## 功能
 
-- 启动时只加载内置下载列表、本地安装器和外接磁盘，避免自动触发系统软件更新扫描。
-- 点击下载现代 macOS 时按需解析 Apple 官方软件更新目录，获取对应的 `InstallAssistant.pkg`。
-- 现代 macOS 使用 Apple `InstallAssistant.pkg` 前台下载，显示百分比、已下载大小、总大小和实时速度。
+- 启动和手动刷新时读取 Apple 正式版软件更新目录，展示 macOS 27、26、15、14、13 当前可获取的最新完整安装器版本；不会启动系统软件更新扫描。
+- 开始下载现代 macOS 时再次查询 Apple 目录，避免长时间打开应用后使用过期版本；离线时保留大版本入口供重试。
+- 现代 macOS 使用 Apple `InstallAssistant.pkg` 前台下载，显示百分比、已下载大小、总大小、剩余量和实时速度。
 - 前台下载完成后自动安装 pkg，把 macOS 安装器放入 `/Applications`，成功后删除临时 pkg。
 - 内置 Apple 官方旧版 DMG 链接：Sierra、El Capitan、Yosemite、Mountain Lion、Lion。
 - 扫描 `/Applications` 中带 `createinstallmedia` 的 macOS 安装器。
 - 扫描外接磁盘卷，并通过安装器自带的 `createinstallmedia` 写入可引导 U 盘。
-- 写入 U 盘时会请求管理员权限，并在执行前二次确认会抹掉目标卷。
+- 写入前会二次确认抹掉目标卷；写入时打开“终端”，在那里输入管理员密码，并允许“终端”访问移动磁盘。
+- 写入启动盘时显示格式化、擦除、复制、制作启动盘等阶段进度；不要在完成前关闭写入命令所在的终端窗口。
 - 包含自定义 macOS app 图标，可安装到“应用程序”并显示在启动台。
 
 ## 构建

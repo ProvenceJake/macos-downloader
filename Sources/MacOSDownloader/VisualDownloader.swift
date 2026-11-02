@@ -10,6 +10,7 @@ final class VisualDownloader: NSObject, URLSessionDownloadDelegate {
     private var lastSampleDate = Date()
     private var lastSampleBytes: Int64 = 0
     private var smoothedSpeed: Double = 0
+    private var lastEmittedBytes: Int64 = 0
     private var didResume = false
     private let lock = NSLock()
 
@@ -23,6 +24,8 @@ final class VisualDownloader: NSObject, URLSessionDownloadDelegate {
         self.lastSampleDate = Date()
         self.lastSampleBytes = 0
         self.smoothedSpeed = 0
+        self.lastEmittedBytes = 0
+        self.didResume = false
 
         try? FileManager.default.removeItem(at: destinationURL)
         try FileManager.default.createDirectory(
@@ -62,15 +65,21 @@ final class VisualDownloader: NSObject, URLSessionDownloadDelegate {
     ) {
         let now = Date()
         let interval = now.timeIntervalSince(lastSampleDate)
-        if interval >= 0.4 {
+        let totalBytes = totalBytesExpectedToWrite > 0 ? totalBytesExpectedToWrite : expectedTotalBytes
+        let isComplete = totalBytes.map { totalBytesWritten >= $0 } ?? false
+        guard interval >= 0.25 || isComplete || totalBytesWritten - lastEmittedBytes >= 32 * 1024 * 1024 else {
+            return
+        }
+
+        if interval > 0 {
             let byteDelta = totalBytesWritten - lastSampleBytes
             let instantSpeed = max(Double(byteDelta) / interval, 0)
             smoothedSpeed = smoothedSpeed == 0 ? instantSpeed : (smoothedSpeed * 0.72 + instantSpeed * 0.28)
             lastSampleBytes = totalBytesWritten
             lastSampleDate = now
         }
+        lastEmittedBytes = totalBytesWritten
 
-        let totalBytes = totalBytesExpectedToWrite > 0 ? totalBytesExpectedToWrite : expectedTotalBytes
         progressHandler(
             DownloadProgressSnapshot(
                 downloadedBytes: totalBytesWritten,
@@ -106,6 +115,10 @@ final class VisualDownloader: NSObject, URLSessionDownloadDelegate {
     ) {
         defer {
             session.invalidateAndCancel()
+            self.session = nil
+            self.task = nil
+            self.destinationURL = nil
+            self.expectedTotalBytes = nil
         }
 
         guard let error else { return }
