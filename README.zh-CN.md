@@ -6,10 +6,12 @@
 <p align="center">
   <img src="https://img.shields.io/badge/platform-Apple%20Silicon-0f766e?style=flat-square" alt="Apple Silicon">
   <img src="https://img.shields.io/badge/macOS-14%2B-334155?style=flat-square" alt="macOS 14 或更高版本">
-  <img src="https://img.shields.io/badge/build-%E6%BA%90%E7%A0%81%E6%9E%84%E5%BB%BA-334155?style=flat-square" alt="从源码构建">
+  <a href="https://github.com/ProvenceJake/macos-downloader/releases/tag/v1.0.0-preview.1"><img src="https://img.shields.io/badge/release-preview-334155?style=flat-square" alt="预览版"></a>
 </p>
 <p align="center"><a href="README.md">English</a> · <strong>简体中文</strong></p>
 <p align="center">
+  <a href="https://github.com/ProvenceJake/macos-downloader/releases/download/v1.0.0-preview.1/MacOS-Downloader-v1.0.0-preview.1-arm64.dmg"><strong>下载 Apple Silicon 版</strong></a> ·
+  <a href="https://github.com/ProvenceJake/macos-downloader/releases/tag/v1.0.0-preview.1">发行说明</a> ·
   <a href="#从源码构建">从源码构建</a> ·
   <a href="#写入-u-盘之前">写盘须知</a> ·
   <a href="https://github.com/ProvenceJake/macos-downloader/issues">反馈问题</a>
@@ -20,7 +22,11 @@
 macOS 下载器在启动和手动刷新时读取 Apple 软件更新目录。下载应用中配置的较新 macOS 版本前，还会再次解析可用的完整 `InstallAssistant.pkg`。下载在前台进行，界面显示已下载大小、速度、剩余时间和进度。部分旧版系统也提供 Apple DMG 的直接下载链接。
 
 > [!IMPORTANT]
-> 这是独立项目，并非 Apple 官方产品。本地构建的应用使用临时签名，**未经公证**；仓库目前没有预编译发行包。制作可引导 U 盘会**抹掉选中的整只外接磁盘**，确认前务必核对目标。
+> 这是独立项目，并非 Apple 官方产品。预览版 DMG 与本地构建的应用都使用临时签名，**未经公证**。制作可引导 U 盘会**抹掉选中的整只外接磁盘**，确认前务必核对目标。
+
+## 下载
+
+下载 [Apple Silicon 版 DMG](https://github.com/ProvenceJake/macos-downloader/releases/download/v1.0.0-preview.1/MacOS-Downloader-v1.0.0-preview.1-arm64.dmg)，并核对 [SHA-256 校验值](https://github.com/ProvenceJake/macos-downloader/releases/download/v1.0.0-preview.1/SHA256SUMS.txt)。打开 DMG 后将 **MacOS下载器.app** 拖到“应用程序”。映像中也附有中英文 README。由于应用未经公证，macOS 可能在首次打开时给出警告；不要为此关闭整个系统的安全保护，也可以选择从源码构建。
 
 ## 功能
 
@@ -43,6 +49,8 @@ cd macos-downloader
 ```
 
 脚本会在 `build/MacOS下载器.app` 生成经过临时签名的 arm64 应用。将它移到 `/Applications` 后即可从启动台打开。应用界面目前主要使用中文；仓库提供中英文说明。
+
+若要在本机制作与预览版布局相同的 DMG，可运行 `./Scripts/package-dmg.sh v1.0.0-preview.1`。映像和校验文件会写入已忽略的 `dist/` 目录。
 
 ## 写入 U 盘之前
 
