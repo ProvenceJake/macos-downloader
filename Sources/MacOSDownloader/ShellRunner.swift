@@ -51,6 +51,7 @@ enum ShellRunner {
             do {
                 try process.run()
             } catch {
+                pipe.fileHandleForReading.readabilityHandler = nil
                 continuationBox.resume(.failure(error))
             }
         }

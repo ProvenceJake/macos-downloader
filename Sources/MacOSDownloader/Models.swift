@@ -50,7 +50,7 @@ struct InstallerOption: Identifiable, Hashable {
 
     func resolved(with package: InstallAssistantPackage) -> InstallerOption {
         InstallerOption(
-            id: "installassistant-\(package.version)-\(package.build)",
+            id: id,
             title: package.title,
             version: package.version,
             build: package.build,
@@ -93,6 +93,28 @@ struct DownloadProgressSnapshot {
     var speedText: String {
         guard speedBytesPerSecond > 0 else { return "计算中" }
         return "\(ByteCountFormatter.string(fromByteCount: Int64(speedBytesPerSecond), countStyle: .file))/s"
+    }
+
+    var percentText: String {
+        guard let fraction else { return "--" }
+        return "\(Int((fraction * 100).rounded()))%"
+    }
+
+    var remainingText: String {
+        guard let totalBytes, totalBytes > downloadedBytes else { return "剩余未知" }
+        let remainingBytes = totalBytes - downloadedBytes
+        return "剩余 \(ByteCountFormatter.string(fromByteCount: remainingBytes, countStyle: .file))"
+    }
+}
+
+struct WriteProgressSnapshot {
+    let phase: String
+    let detail: String
+    let fraction: Double?
+
+    var percentText: String {
+        guard let fraction else { return "--" }
+        return "\(Int((min(max(fraction, 0), 1) * 100).rounded()))%"
     }
 }
 

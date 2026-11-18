@@ -14,7 +14,9 @@ final class AppModel: ObservableObject {
     @Published var currentTask = "准备就绪"
     @Published var progress: Double?
     @Published var downloadProgress: DownloadProgressSnapshot?
+    @Published var writeProgress: WriteProgressSnapshot?
     @Published var isDownloading = false
+    @Published var isWritingUSB = false
     @Published var showEraseConfirmation = false
 
     private var activeDownloader: VisualDownloader?
@@ -32,22 +34,37 @@ final class AppModel: ObservableObject {
     }
 
     func refreshAll() async {
-        refreshDownloadOptions()
+        guard !isBusy else { return }
+        isBusy = true
+        progress = nil
+        defer {
+            isBusy = false
+            currentTask = "准备就绪"
+        }
+
         scanLocalInstallers()
         await refreshUSBVolumes()
-    }
-
-    func refreshDownloadOptions() {
-        let previousVersion = selectedInstaller?.version
-        installers = InstallerCatalog.fallbackInstallers
-        selectedInstallerID = previousVersion.flatMap { version in
-            installers.first { $0.version == version }?.id
-        } ?? installers.first?.id
-        appendLog("已加载下载列表。下载时才解析 Apple 官方地址，避免启动时占用 CPU。", level: .success)
+        await refreshAvailableInstallers()
     }
 
     func refreshAvailableInstallers() async {
-        refreshDownloadOptions()
+        currentTask = "正在查询 Apple 完整安装器"
+        let selectedID = selectedInstallerID
+        installers = InstallerCatalog.fallbackInstallers
+        selectedInstallerID = installers.first(where: { $0.id == selectedID })?.id ?? installers.first?.id
+        do {
+            let packages = try await CatalogResolver.loadInstallAssistantPackages()
+            guard !packages.isEmpty else { throw CatalogResolverError.invalidCatalog }
+            installers = InstallerCatalog.latestInstallers(from: packages)
+            selectedInstallerID = installers.first(where: { $0.id == selectedID })?.id ?? installers.first?.id
+            let availableCount = installers.filter {
+                if case .installAssistantPackage = $0.source { return true }
+                return false
+            }.count
+            appendLog("已从 Apple 官方目录更新 \(availableCount) 个 macOS 完整安装器版本。", level: .success)
+        } catch {
+            appendLog("获取最新版本失败：\(error.localizedDescription)", level: .error)
+        }
     }
 
     func scanLocalInstallers() {
@@ -101,10 +118,8 @@ final class AppModel: ObservableObject {
         }
 
         switch installer.source {
-        case .softwareUpdate:
+        case .softwareUpdate, .installAssistantPackage:
             await resolveAndDownloadInstallAssistant(installer)
-        case let .installAssistantPackage(url):
-            await downloadInstallAssistant(installer, packageURL: url, expectedSize: nil)
         case let .legacyDMG(url):
             await downloadLegacyDMG(installer, url: url)
         }
@@ -135,48 +150,59 @@ final class AppModel: ObservableObject {
         guard let installer = selectedLocalInstaller, let volume = selectedVolume else { return }
 
         isBusy = true
-        progress = nil
-        currentTask = "正在请求管理员授权"
+        isWritingUSB = true
+        progress = 0
+        writeProgress = WriteProgressSnapshot(phase: "准备", detail: "正在准备写入", fraction: 0)
+        currentTask = "正在准备写入"
         appendLog("准备写入：\(installer.displayTitle) -> \(volume.mountPoint)。", level: .warning)
         appendLog("目标磁盘会被抹掉并重建。", level: .warning)
 
-        let targetVolumePath: String
-        do {
-            targetVolumePath = try await prepareVolumeForCreateInstallMediaIfNeeded(volume)
-        } catch {
-            appendLog("准备 U 盘失败：\(error.localizedDescription)", level: .error)
+        defer {
             isBusy = false
+            isWritingUSB = false
             currentTask = "准备就绪"
-            return
         }
 
-        let shellCommand = [
-            shellQuote(installer.createInstallMediaPath),
-            "--volume",
-            shellQuote(targetVolumePath),
-            "--nointeraction"
-        ].joined(separator: " ")
-
-        let script = "do shell script \(appleScriptLiteral(shellCommand)) with administrator privileges"
-
         do {
-            currentTask = "正在写入启动盘"
-            let result = try await ShellRunner.run("/usr/bin/osascript", arguments: ["-e", script]) { [weak self] line in
+            let preEraseRequired = volume.requiresPreEraseForCreateInstallMedia
+            let targetVolumePath = try await prepareVolumeForCreateInstallMediaIfNeeded(volume)
+
+            let shellCommand = [
+                shellQuote(installer.createInstallMediaPath),
+                "--volume",
+                shellQuote(targetVolumePath),
+                "--nointeraction"
+            ].joined(separator: " ")
+
+            currentTask = "请在终端输入管理员密码"
+            updateWriteProgress(
+                phase: "写入",
+                detail: "请在终端输入管理员密码，并允许访问移动磁盘",
+                fraction: preEraseRequired ? 0.15 : 0.02
+            )
+            let base = preEraseRequired ? 0.15 : 0.0
+            let span = 1.0 - base
+            appendLog("已在终端启动 Apple 的 createinstallmedia；请在那里输入管理员密码，并允许“终端”访问移动磁盘。", level: .info)
+            _ = try await TerminalCommandRunner.run(shellCommand) { [weak self] line in
                 self?.appendLog(line, level: .info)
-            }
-            let trimmed = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty {
-                appendLog(trimmed, level: .info)
+                self?.updateCreateInstallMediaProgress(from: line, base: base, span: span)
             }
             progress = 1
+            updateWriteProgress(phase: "完成", detail: "启动盘写入完成", fraction: 1)
             appendLog("启动盘写入完成。", level: .success)
             await refreshUSBVolumes()
         } catch {
-            appendLog("写入失败：\(error.localizedDescription)", level: .error)
+            let failure = conciseErrorDescription(error)
+            writeProgress = WriteProgressSnapshot(
+                phase: "失败",
+                detail: "启动盘未写入完成",
+                fraction: writeProgress?.fraction
+            )
+            if failure.contains(".IAPhysicalMedia") || failure.contains("Operation not permitted") {
+                appendLog("系统拒绝终端访问移动磁盘。请在“系统设置 > 隐私与安全性 > 文件与文件夹”中允许“终端”访问移动磁盘，然后重试。", level: .warning)
+            }
+            appendLog("写入失败：\(failure)", level: .error)
         }
-
-        isBusy = false
-        currentTask = "准备就绪"
     }
 
     func openApplicationsFolder() {
@@ -199,7 +225,12 @@ final class AppModel: ObservableObject {
         appendLog("正在从 Apple 软件更新目录解析 \(installer.displayTitle) 的 InstallAssistant.pkg。", level: .info)
 
         do {
-            let package = try await CatalogResolver.resolve(version: installer.version)
+            let package = try await CatalogResolver.resolveLatest(
+                majorVersion: InstallerCatalog.majorVersion(for: installer.version)
+            )
+            if let index = installers.firstIndex(where: { $0.id == installer.id }) {
+                installers[index] = installer.resolved(with: package)
+            }
             await downloadInstallAssistant(installer.resolved(with: package), packageURL: package.url, expectedSize: package.sizeBytes)
         } catch {
             appendLog("解析下载地址失败：\(error.localizedDescription)", level: .error)
@@ -324,6 +355,7 @@ final class AppModel: ObservableObject {
         let expectedMountPoint = "/Volumes/\(temporaryVolumeName)"
 
         currentTask = "正在格式化 U 盘"
+        updateWriteProgress(phase: "格式化", detail: "正在准备 \(wholeDiskIdentifier)", fraction: 0.02)
         appendLog("目标卷是 \(volume.filesystemDescription)，createinstallmedia 不能直接使用 APFS。", level: .warning)
         appendLog("将先抹掉整只外接磁盘 \(wholeDiskIdentifier)，格式化为 Mac OS Extended (Journaled)。", level: .warning)
 
@@ -336,13 +368,9 @@ final class AppModel: ObservableObject {
             shellQuote("/dev/\(wholeDiskIdentifier)")
         ].joined(separator: " ")
 
-        let script = "do shell script \(appleScriptLiteral(shellCommand)) with administrator privileges"
-        let result = try await ShellRunner.run("/usr/bin/osascript", arguments: ["-e", script]) { [weak self] line in
+        _ = try await PrivilegedCommandRunner.run(shellCommand) { [weak self] line in
             self?.appendLog(line, level: .info)
-        }
-        let trimmed = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmed.isEmpty {
-            appendLog(trimmed, level: .info)
+            self?.updateDiskEraseProgress(from: line)
         }
 
         guard FileManager.default.fileExists(atPath: expectedMountPoint) else {
@@ -350,6 +378,7 @@ final class AppModel: ObservableObject {
         }
 
         appendLog("已格式化为 \(expectedMountPoint)，继续写入启动盘。", level: .success)
+        updateWriteProgress(phase: "格式化", detail: "格式化完成", fraction: 0.15)
         return expectedMountPoint
     }
 
@@ -368,6 +397,101 @@ final class AppModel: ObservableObject {
         if logEntries.count > 300 {
             logEntries.removeFirst(logEntries.count - 300)
         }
+    }
+
+    private func updateWriteProgress(phase: String, detail: String, fraction: Double?) {
+        let boundedFraction = fraction.map { min(max($0, 0), 1) }
+        writeProgress = WriteProgressSnapshot(phase: phase, detail: detail, fraction: boundedFraction)
+        progress = boundedFraction
+        currentTask = boundedFraction.map {
+            "\(phase)：\(Int(($0 * 100).rounded()))% · \(detail)"
+        } ?? "\(phase)：\(detail)"
+    }
+
+    private func updateDiskEraseProgress(from line: String) {
+        let lowercased = line.lowercased()
+        let localFraction: Double
+
+        if lowercased.contains("unmount") || line.contains("卸载") {
+            localFraction = 0.18
+        } else if lowercased.contains("creating the partition map") || lowercased.contains("partition") || line.contains("分区") {
+            localFraction = 0.40
+        } else if lowercased.contains("formatting") || lowercased.contains("newfs") || line.contains("格式化") {
+            localFraction = 0.68
+        } else if lowercased.contains("mounting") || line.contains("装载") || line.contains("挂载") {
+            localFraction = 0.88
+        } else if lowercased.contains("finished erase") || line.contains("完成") {
+            localFraction = 1.0
+        } else {
+            localFraction = 0.08
+        }
+
+        updateWriteProgress(
+            phase: "格式化",
+            detail: line,
+            fraction: 0.02 + localFraction * 0.13
+        )
+    }
+
+    private func updateCreateInstallMediaProgress(from line: String, base: Double, span: Double) {
+        let lowercased = line.lowercased()
+        let percent = lastPercent(in: line)
+        let localFraction: Double
+
+        if lowercased.contains("erasing disk") {
+            localFraction = 0.02 + (percent ?? 0) * 0.12
+        } else if lowercased.contains("copying essential files") {
+            localFraction = 0.16
+        } else if lowercased.contains("copying the macos recoveryos") {
+            localFraction = 0.22
+        } else if lowercased.contains("making disk bootable") {
+            localFraction = 0.26
+        } else if lowercased.contains("copying to disk") {
+            localFraction = 0.28 + (percent ?? 0) * 0.70
+        } else if lowercased.contains("copying boot files") {
+            localFraction = 0.25
+        } else if lowercased.contains("install media now available") {
+            localFraction = 1.0
+        } else {
+            localFraction = 0.02
+        }
+
+        let previousFraction = writeProgress?.fraction ?? base
+        let nextFraction = base + min(max(localFraction, 0), 1) * span
+
+        updateWriteProgress(
+            phase: "写入",
+            detail: line,
+            fraction: max(previousFraction, nextFraction)
+        )
+    }
+
+    private func lastPercent(in line: String) -> Double? {
+        guard let regex = try? NSRegularExpression(pattern: #"(\d+(?:\.\d+)?)%"#) else {
+            return nil
+        }
+        let range = NSRange(line.startIndex..<line.endIndex, in: line)
+        guard let match = regex.matches(in: line, range: range).last,
+              let percentRange = Range(match.range(at: 1), in: line),
+              let value = Double(line[percentRange]) else {
+            return nil
+        }
+        return min(max(value / 100, 0), 1)
+    }
+
+    private func conciseErrorDescription(_ error: Error) -> String {
+        if case let ShellError.failed(_, status, output) = error {
+            let meaningfulLines = output
+                .components(separatedBy: .newlines)
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty && !$0.hasPrefix("__MACOS_DOWNLOADER_") }
+            let tail = meaningfulLines.suffix(5).joined(separator: "\n")
+            if tail.isEmpty {
+                return "命令退出，状态码 \(status)。"
+            }
+            return "命令退出，状态码 \(status)：\(tail)"
+        }
+        return error.localizedDescription
     }
 
     private func parseUSBVolumes(from plistOutput: String) -> [USBVolume] {

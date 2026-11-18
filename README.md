@@ -1,37 +1,59 @@
-# macOS 下载器
+<p align="center">
+  <img src="Resources/AppIcon.png" width="120" height="120" alt="macOS Downloader app icon">
+</p>
+<h1 align="center">macOS Downloader</h1>
+<p align="center"><strong>Official macOS installers, with download progress and a bootable USB writer.</strong><br>A native Apple Silicon app for finding, downloading, and preparing macOS installers.</p>
+<p align="center">
+  <img src="https://img.shields.io/badge/platform-Apple%20Silicon-0f766e?style=flat-square" alt="Apple Silicon">
+  <img src="https://img.shields.io/badge/macOS-14%2B-334155?style=flat-square" alt="macOS 14 or later">
+  <img src="https://img.shields.io/badge/build-from%20source-334155?style=flat-square" alt="Build from source">
+</p>
+<p align="center"><strong>English</strong> · <a href="README.zh-CN.md">简体中文</a></p>
+<p align="center">
+  <a href="#build-from-source">Build from source</a> ·
+  <a href="#before-writing-a-usb-drive">USB safety</a> ·
+  <a href="https://github.com/ProvenceJake/macos-downloader/issues">Report an issue</a>
+</p>
 
-一个原生 Apple Silicon macOS 工具，用于下载 Apple 提供的完整 macOS 安装器，并把 `/Applications` 中的安装器写入 U 盘。
+---
 
-## 功能
+macOS Downloader reads Apple's software update catalog when it starts and when you refresh it. For the modern macOS families configured in the app, it resolves the available full `InstallAssistant.pkg` again when you begin a download. The app downloads in the foreground and shows bytes, speed, remaining time, and progress. It also offers direct Apple DMG links for selected older releases.
 
-- 启动时只加载内置下载列表、本地安装器和外接磁盘，避免自动触发系统软件更新扫描。
-- 点击下载现代 macOS 时按需解析 Apple 官方软件更新目录，获取对应的 `InstallAssistant.pkg`。
-- 现代 macOS 使用 Apple `InstallAssistant.pkg` 前台下载，显示百分比、已下载大小、总大小和实时速度。
-- 前台下载完成后自动安装 pkg，把 macOS 安装器放入 `/Applications`，成功后删除临时 pkg。
-- 内置 Apple 官方旧版 DMG 链接：Sierra、El Capitan、Yosemite、Mountain Lion、Lion。
-- 扫描 `/Applications` 中带 `createinstallmedia` 的 macOS 安装器。
-- 扫描外接磁盘卷，并通过安装器自带的 `createinstallmedia` 写入可引导 U 盘。
-- 写入 U 盘时会请求管理员权限，并在执行前二次确认会抹掉目标卷。
-- 包含自定义 macOS app 图标，可安装到“应用程序”并显示在启动台。
+> [!IMPORTANT]
+> This is an independent project, not an Apple product. The locally built app is ad-hoc signed and **not notarized**; there is no prebuilt release in this repository. Creating a bootable USB drive **erases the selected external disk**. Check the target carefully before confirming.
 
-## 构建
+## What it does
 
-```bash
+| Installer catalog | Visual download | Bootable USB |
+| --- | --- | --- |
+| Lists the configured modern macOS families, resolves available full installers, and links to selected legacy DMGs. | Downloads `InstallAssistant.pkg` in the foreground with live progress and speed, then installs the downloaded package into `/Applications`. | Finds local installer apps and mounted external drives, then runs Apple's `createinstallmedia` and mirrors its output in the app. |
+
+Modern installer availability depends on Apple's catalog and your Mac. A catalog entry is **not** a guarantee that the chosen macOS can be installed on a particular Mac. Check [Apple's macOS compatibility guidance](https://support.apple.com/en-us/102662) before downloading or writing media.
+
+Legacy DMGs are download-only: open the downloaded DMG and run its PKG to place the installer in `/Applications`, then refresh the app. A compatible Mac is still required.
+
+## Build from source
+
+Requires an Apple Silicon Mac running macOS 14 or later, plus Xcode or the Xcode Command Line Tools with Swift.
+
+```sh
+git clone https://github.com/ProvenceJake/macos-downloader.git
+cd macos-downloader
 ./Scripts/build-arm64-app.sh
 ```
 
-构建完成后会生成：
+The script produces an ad-hoc-signed arm64 app at `build/MacOS下载器.app`. Move it to `/Applications` to make it available from Launchpad. The app's interface is currently in Chinese; this repository has English and Chinese documentation.
 
-```text
-build/MacOS下载器.app
-```
+## Before writing a USB drive
 
-也可以直接运行开发版：
+1. Download a full macOS installer and confirm its app is in `/Applications`.
+2. Connect an external USB drive, select the installer and target drive, and review the erase confirmation. **All data on the target disk will be deleted.**
+3. The app opens Terminal for Apple's `createinstallmedia`. Enter your administrator password there and allow Terminal to access removable volumes if macOS asks. Keep that Terminal window open until the command finishes.
 
-```bash
-swift run MacOSDownloader
-```
+An APFS target is first reformatted as Mac OS Extended (Journaled) because `createinstallmedia` cannot use APFS as bootable install media. The app shows formatting and write progress, but the installer command's successful completion is the final result. Do not eject the drive early.
 
-## 注意
+## Scope and validation
 
-写入启动盘会删除目标 U 盘上的全部数据。旧版 DMG 下载完成后，需要打开 DMG 中的 PKG，让它把安装器安装到“应用程序”文件夹，然后再回到本工具刷新本地安装器。现代 macOS 下载会请求管理员权限安装 `InstallAssistant.pkg`。
+The project includes smoke checks for catalog parsing, command exit codes, and progress-log handling. A local build and those checks do not certify every macOS installer, Mac model, or USB drive. No background download service or automatically scheduled disk write is installed.
+
+When [reporting an issue](https://github.com/ProvenceJake/macos-downloader/issues), include your macOS version, Mac architecture, installer version, target drive format, and the relevant error. Remove serial numbers, private paths, and credentials from logs before posting.

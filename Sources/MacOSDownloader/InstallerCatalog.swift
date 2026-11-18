@@ -4,45 +4,76 @@ import Foundation
 enum InstallerCatalog {
     static let modernInstallers: [InstallerOption] = [
         InstallerOption(
-            id: "modern-tahoe-26.5.2",
+            id: "modern-27",
+            title: "macOS Golden Gate",
+            version: "27",
+            build: nil,
+            sizeHint: nil,
+            source: .softwareUpdate,
+            note: "点击下载时查询 Apple 提供的最新完整安装器。"
+        ),
+        InstallerOption(
+            id: "modern-26",
             title: "macOS Tahoe",
-            version: "26.5.2",
+            version: "26",
             build: nil,
             sizeHint: nil,
             source: .softwareUpdate,
-            note: "新版快捷入口。点击下载时才解析 Apple 官方地址，避免启动时占用 CPU。"
+            note: "点击下载时查询 Apple 提供的最新完整安装器。"
         ),
         InstallerOption(
-            id: "modern-sequoia-15.7.7",
+            id: "modern-15",
             title: "macOS Sequoia",
-            version: "15.7.7",
+            version: "15",
             build: nil,
             sizeHint: nil,
             source: .softwareUpdate,
-            note: "新版快捷入口。点击下载时才解析 Apple 官方地址，避免启动时占用 CPU。"
+            note: "点击下载时查询 Apple 提供的最新完整安装器。"
         ),
         InstallerOption(
-            id: "modern-sonoma-14.8.7",
+            id: "modern-14",
             title: "macOS Sonoma",
-            version: "14.8.7",
+            version: "14",
             build: nil,
             sizeHint: nil,
             source: .softwareUpdate,
-            note: "新版快捷入口。点击下载时才解析 Apple 官方地址，避免启动时占用 CPU。"
+            note: "点击下载时查询 Apple 提供的最新完整安装器。"
         ),
         InstallerOption(
-            id: "modern-ventura-13.7.8",
+            id: "modern-13",
             title: "macOS Ventura",
-            version: "13.7.8",
+            version: "13",
             build: nil,
             sizeHint: nil,
             source: .softwareUpdate,
-            note: "新版快捷入口。点击下载时才解析 Apple 官方地址，避免启动时占用 CPU。"
+            note: "点击下载时查询 Apple 提供的最新完整安装器。"
         )
     ]
 
     static var fallbackInstallers: [InstallerOption] {
         modernInstallers + legacyInstallers
+    }
+
+    static func latestInstallers(from packages: [InstallAssistantPackage]) -> [InstallerOption] {
+        modernInstallers.map { option in
+            guard let package = packages
+                .filter({ majorVersion(for: $0.version) == option.version })
+                .max(by: { lhs, rhs in
+                    let order = lhs.version.compare(rhs.version, options: .numeric)
+                    if order == .orderedSame {
+                        return (lhs.postDate ?? .distantPast) < (rhs.postDate ?? .distantPast)
+                    }
+                    return order == .orderedAscending
+                })
+            else {
+                return option
+            }
+            return option.resolved(with: package)
+        } + legacyInstallers
+    }
+
+    static func majorVersion(for version: String) -> String {
+        String(version.split(separator: ".", maxSplits: 1).first ?? "")
     }
 
     static let legacyInstallers: [InstallerOption] = [
@@ -116,18 +147,8 @@ enum InstallerCatalog {
         return merged
     }
 
-    static func resolve(_ options: [InstallerOption], with packages: [InstallAssistantPackage]) -> [InstallerOption] {
-        let packagesByVersion = Dictionary(uniqueKeysWithValues: packages.map { ($0.version, $0) })
-        return options.map { option in
-            guard case .softwareUpdate = option.source, let package = packagesByVersion[option.version] else {
-                return option
-            }
-            return option.resolved(with: package)
-        }
-    }
-
     static func title(for version: String) -> String {
-        if version.hasPrefix("27.") { return "macOS Golden Gate Beta" }
+        if version.hasPrefix("27.") { return "macOS Golden Gate" }
         if version.hasPrefix("26.") { return "macOS Tahoe" }
         if version.hasPrefix("15.") { return "macOS Sequoia" }
         if version.hasPrefix("14.") { return "macOS Sonoma" }
